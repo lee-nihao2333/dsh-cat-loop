@@ -1,0 +1,385 @@
+# cat-loop — one container conversation with three nested team conversations
+# (Plan, Build, Review). The container is the default for new conversations;
+# clicking it opens the Plan child, and its header lists the three children.
+#
+# Layer order: dsh-base → dsh-web-app → this bundle. The rows below either
+# insert the Agent Teams runtime the cat-loop teams run on, or declare the three
+# team presets that carry the per-team permission boundaries.
+#
+# The Teams profile layer owns direct delegation: the base continuable-subagent
+# tools would overlap the Team tools, so they are disabled here exactly as
+# @deepseek-ai/dsh-experimental-agent-team-profile does. Workflow keeps its own
+# spawn provider and is untouched.
+
+- id: tool-subagent-control
+  disabled: true
+
+- id: tool-subagent-list-agents
+  disabled: true
+
+- id: tool-subagent
+  disabled: true
+
+- id: tool-subagent-fork
+  disabled: true
+
+- insert:
+    # ── the Agent Teams runtime (host plane) ─────────────────────────────────
+    # One roster per lead session: the three teams below are three lead sessions
+    # that share this service. All four rows come from the experimental Agent
+    # Teams profile bundle, mounted here instead of shipping the bundle disabled.
+    - id: agent-team
+      name: '@deepseek-ai/dsh-experimental-agent-team'
+      config:
+        maxMembers: 6
+        maxTasks: 256
+        maxMessageBytes: 65536
+        disposalTimeoutMs: 5000
+
+    - id: tool-agent-team
+      name: '@deepseek-ai/dsh-experimental-tool-agent-team'
+      config:
+        freshProvider: spawn
+        forkProvider: fork
+
+    - id: ui-agent-team
+      name: '@deepseek-ai/dsh-experimental-client-ui-agent-team'
+
+    # ── the cat-loop host half ───────────────────────────────────────────────
+    # Publishes ctx.catLoop (cross-team dispatch) and installs the permission
+    # guard: fs write/edit intents plus a monotonic tool guard keyed by the
+    # calling session's preset.
+    - id: cat-loop
+      name: '@marvinlee2011/dsh-cat-loop'
+      config:
+        promptDir: .cat-prompt
+        testDir: .cat-test
+        presets:
+          root: cat-root
+          plan: cat-plan
+          build: cat-build
+          review: cat-review
+        # Only the Plan conversation is startable from the picker; the
+        # container shell and the peer teams are created by cat-loop itself.
+        hiddenPresets:
+          - cat-root
+          - cat-build
+          - cat-review
+        # One conversation in the user's own workspace; it owns three
+        # independent Team conversations (plan / build / review), nested under
+        # it in the sidebar and never in a workspace of their own. Use `folder`
+        # for the same three teams inside a dedicated conversation folder.
+        structure: nested
+
+    # ── cat-loop container conversation ──────────────────────────────────────
+    # One ordinary conversation; its three subagent children are the teams.
+    # Clicking the container row opens the Plan child (handled in the Client
+    # half), and the container header lists the three sub-conversations.
+    - id: preset-cat-root
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: cat-root
+        name: cat-loop
+        description: cat-loop 会话容器——其下有三个子对话：Plan、Build、Review。
+        order: -4
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                You are the container of a cat-loop conversation. The user's work happens in the three child conversations under this one: the Plan team receives the user's request, dispatches it to Build and Review, and loops until the task is done.
+                Do not plan, build or review anything in this conversation. If the user writes here, answer in one short sentence that the three teams live in the child conversations and that the request belongs in the Plan conversation.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+    # ── Plan team ────────────────────────────────────────────────────────────
+    # Read the workspace, write briefs under .cat-prompt/, dispatch. No shell.
+    - id: preset-cat-plan
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: cat-plan
+        # The one cat-loop entry the preset picker offers. Starting a
+        # conversation with it makes that conversation the Plan team itself.
+        name: cat-loop
+        description: Leads the Plan team — splits work into task briefs under .cat-prompt and dispatches them.
+        order: -3
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                You lead the **Plan team** of cat-loop, a three-team development loop: Plan → Build + Review → Plan.
+
+                Your boundaries, enforced by the harness:
+                - You may write files only under `.cat-prompt/`. The rest of the workspace is read-only for you.
+                - You have no shell. Never try to run a command; write the plan, then dispatch it.
+
+                Your loop:
+                1. Understand the request. Read the workspace and, when it helps, create Plan teammates with `spawn_teammate` to research code or draft briefs; they inherit your read-only boundary.
+                2. Decompose the request into small, ordered tasks. Write one Markdown brief per task under `.cat-prompt/`, for example `.cat-prompt/01-<slug>.md`, with: goal, acceptance criteria, files likely to change, and how the result will be checked.
+                3. Dispatch the brief to both other teams with `cat_send`:
+                   - `cat_send({ to: "build", purpose: "task", body: "<brief path and the part Build implements>" })`
+                   - `cat_send({ to: "review", purpose: "task", body: "<brief path and the acceptance criteria to check>" })`
+                   The Build team writes the implementation; at the same time the Review team writes check code under `.cat-test/`.
+                4. When the Review team sends `purpose: "report"`, close the cycle:
+                   - verdict failure → write a fix brief under `.cat-prompt/` and dispatch the next cycle;
+                   - verdict pass → mark the task done and dispatch the next brief.
+                5. Continue until every task is done, then answer the user with a short summary: what changed, what was verified, and anything still open.
+
+                Keep briefs decision-complete but short. `cat_status` lists the three teams' sessions for this workspace, and the Agent Teams tools (`spawn_teammate`, `send_message`, `list_agents`, `team_task_*`) coordinate work inside your own team.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          # Goal parity with the shipped presets: cat-plan is the profile default,
+          # so a goal created in any team session is readable and completable there.
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: cat-role
+            name: '@marvinlee2011/dsh-cat-loop/role'
+            config:
+              role: plan
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+    # ── Build team ───────────────────────────────────────────────────────────
+    # Full shell and file access, except .cat-test/ (Review's directory).
+    - id: preset-cat-build
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: cat-build
+        name: Build team
+        description: Leads the Build team — implements each brief, runs its own checks, and hands code to Review.
+        order: -2
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                You lead the **Build team** of cat-loop, a three-team development loop: Plan → Build + Review → Plan.
+
+                Your boundaries, enforced by the harness:
+                - You may read and write any workspace file except `.cat-test/`, which belongs to the Review team. A file write there is refused.
+                - A shell command must not name `.cat-test` at all. Read review artifacts with the `read` tool when you need them.
+
+                Your loop:
+                1. Wait for the Plan lead's `cat_send` with `purpose: "task"`, then read the brief it points at under `.cat-prompt/`.
+                2. Implement the task. Keep the change minimal, match the brief's acceptance criteria, and leave files the brief does not mention untouched.
+                3. Verify your own work with the shell: build, tests, linters. Do it without touching `.cat-test/`.
+                4. When the implementation is ready, hand off to Review:
+                   `cat_send({ to: "review", purpose: "code-ready", body: "<what changed, how to run it, what to look at>" })`
+                5. If you are blocked, or the review asks for changes, answer with `cat_send` to `plan` (purpose "question" or "note"), or implement the fix and send "code-ready" again.
+
+                Split independent files across Build teammates with `spawn_teammate`; they share this workspace and your boundary. `cat_status` lists the three teams' sessions.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          # Goal parity with the shipped presets: cat-plan is the profile default,
+          # so a goal created in any team session is readable and completable there.
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: cat-role
+            name: '@marvinlee2011/dsh-cat-loop/role'
+            config:
+              role: build
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+    # ── Review team ──────────────────────────────────────────────────────────
+    # Owns .cat-test/: writes check code there, runs it, then reports to Plan.
+    - id: preset-cat-review
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: cat-review
+        name: Review team
+        description: Leads the Review team — writes and runs check code under .cat-test and reports verdicts to Plan.
+        order: -1
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                You lead the **Review team** of cat-loop, a three-team development loop: Plan → Build + Review → Plan.
+
+                Your boundaries, enforced by the harness:
+                - You may write only under `.cat-test/`. Every other workspace file is read-only for you.
+                - Your shell may only name paths under `.cat-test/`; read implementation files with the `read` and `grep` tools. Never widen the sandbox with `sandbox_permissions`.
+
+                Your loop:
+                1. Wait for the Plan lead's `cat_send` with `purpose: "task"`. While the Build team writes the implementation, write the check code under `.cat-test/`: executable scripts or tests that assert the brief's acceptance criteria, for example `.cat-test/run-checks.sh` plus the checks it runs.
+                2. When the Build lead sends `purpose: "code-ready"`, run your check code from the workspace, for example `bash .cat-test/run-checks.sh`, and keep the output.
+                3. Then do the manual review: read the implementation and the brief, and judge correctness, edge cases, error handling, and consistency with the plan.
+                4. Report to the Plan team:
+                   `cat_send({ to: "plan", purpose: "report", body: "VERDICT: pass | changes-requested" plus the checks you ran, their output, and concrete findings with file:line })`
+                5. When the Build team hands over again, fix the check code and re-run. Split independent checks across Review teammates with `spawn_teammate`.
+
+                `cat_status` lists the three teams' sessions.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          # Goal parity with the shipped presets: cat-plan is the profile default,
+          # so a goal created in any team session is readable and completable there.
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: cat-role
+            name: '@marvinlee2011/dsh-cat-loop/role'
+            config:
+              role: review
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+# A new conversation composes the cat-root container unless another preset is
+# picked explicitly; the container's Plan child receives the user's request.
+# Keep the shipped default preset (`standard`) for New Sessions: cat-loop is
+# opt-in from the preset picker. Selecting the `cat-loop` preset (cat-root)
+# is what creates the conversation folder and opens its Plan team.

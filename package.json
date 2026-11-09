@@ -1,0 +1,69 @@
+{
+  "name": "@marvinlee2011/dsh-cat-loop",
+  "version": "1.0.0",
+  "description": "cat-loop for the DeepSeek Harness: three independent Agent Teams (Plan, Build, Review) in one conversation, with enforced permission boundaries.",
+  "license": "MIT",
+  "author": "marvinlee2011",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lee-nihao2333/dsh-cat-loop.git"
+  },
+  "homepage": "https://github.com/lee-nihao2333/dsh-cat-loop#readme",
+  "bugs": {
+    "url": "https://github.com/lee-nihao2333/dsh-cat-loop/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "cordis-plugin",
+    "agent-teams",
+    "multi-agent",
+    "cat-loop"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./role": "./lib/role.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "npm test"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-subagent",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  }
+}

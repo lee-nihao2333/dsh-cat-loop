@@ -1,0 +1,11 @@
+{
+  "meta": {
+    "title": "cat-loop",
+    "description": "One cat-loop conversation whose three sub-conversations are the Plan, Build and Review teams. Opening the conversation lands in the Plan sub-conversation; each team has an enforced permission boundary."
+  },
+  "roles": {
+    "plan": "Leads the Plan team — splits work into task briefs under .cat-prompt and dispatches them.",
+    "build": "Leads the Build team — implements each brief, runs its own checks, and hands code to Review.",
+    "review": "Leads the Review team — writes and runs check code under .cat-test and reports verdicts to Plan."
+  }
+}

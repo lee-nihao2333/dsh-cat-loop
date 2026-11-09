@@ -1,0 +1,11 @@
+{
+  "meta": {
+    "title": "cat-loop",
+    "description": "一个 cat-loop 会话，其下三个子对话分别是 Plan、Build、Review 团队；点击会话直接进入 Plan 子对话，每个团队都有强制执行的权限边界。"
+  },
+  "roles": {
+    "plan": "Plan 团队队长：把大任务拆成 .cat-prompt 下的任务文档并派发。",
+    "build": "Build 团队队长：实现每个任务，自己先跑构建与测试，然后把代码交给 Review。",
+    "review": "Review 团队队长：在 .cat-test 下编写并执行检查代码，向 Plan 汇报结论。"
+  }
+}
